@@ -87,13 +87,14 @@
 
     <script>
         // ユーザーから提供されたデータ
-        const rawData = `修繕（12: 242/629）
+        const rawData = `マンション玄関（301/576）
+修繕（12: 242/629）
 修繕（16: 199/641）
 耐久力III（25: 241/609）
 効率強化V（53: 141/638）
 ダメージ軽減IV（36: 173/646）
 シルクタッチ（16: 172/633）
-幸運III（17: 242/610）
+幸運III（17:  242/610）
 ダメージ増加V（32: 183/663）
 ダメージ増加IV（21: 191/631）
 ドロップ増加III（37: 172/637）
@@ -114,20 +115,30 @@
 
         function parseData(text) {
             const lines = text.trim().split('\n');
-            const regex = /(.+?)（(\d+):\s*(\d+)\/(\d+)\）/;
+            // 金額あり・なし両方のフォーマットに対応する正規表現
+            const regex = /(.+?)（(?:(\d+):)?\s*(\d+)\/(\d+)\）/;
             const data = [];
             let index = 0;
             for (const line of lines) {
                 const match = line.match(regex);
                 if (match) {
+                    const name = match[1].trim();
+                    // match[2]は金額。存在しない場合はundefinedになる
+                    const amount = match[2] ? +match[2] : null;
+                    const x = +match[3];
+                    const z = +match[4];
+
+                    // 金額の有無によってラベルを生成
+                    const label = amount !== null ? `${name}（${amount}）` : name;
+
                     data.push({
-                        id: `id-${match[3]}-${match[4]}-${index}`, // ユニークIDを生成
-                        name: match[1].trim(),
-                        amount: +match[2],
-                        x: +match[3],
-                        z: +match[4],
-                        label: `${match[1].trim()}（${match[2]}）`,
-                        priority: index++ // 重要度（元データの順番）を保持
+                        id: `id-${x}-${z}-${index}`,
+                        name: name,
+                        amount: amount,
+                        x: x,
+                        z: z,
+                        label: label,
+                        priority: index++
                     });
                 }
             }
@@ -163,45 +174,52 @@
             .attr("transform", `translate(${margin.left},${margin.top})`);
 
         const chartArea = svg.append("g");
-
         const tooltip = d3.select("#tooltip");
 
-        const xDomain = d3.extent(data, d => d.x);
-        const zDomain = d3.extent(data, d => d.z);
-        const padding = (xDomain[1] - xDomain[0]) * 0.1;
+        // --- 軸とスケールの定義（XとZを入れ替え） ---
+        const zDomain = d3.extent(data, d => d.z); // 横軸
+        const xDomain = d3.extent(data, d => d.x); // 縦軸
+        const paddingZ = (zDomain[1] - zDomain[0]) * 0.1;
+        const paddingX = (xDomain[1] - xDomain[0]) * 0.1;
 
-        const xScale = d3.scaleLinear()
-            .domain([xDomain[0] - padding, xDomain[1] + padding])
+        // 横軸（Z座標）のスケール
+        const zScale = d3.scaleLinear()
+            .domain([zDomain[0] - paddingZ, zDomain[1] + paddingZ])
             .range([0, chartWidth]);
 
-        const zScale = d3.scaleLinear()
-            .domain([zDomain[0] - padding, zDomain[1] + padding])
+        // 縦軸（X座標）のスケール
+        const xScale = d3.scaleLinear()
+            .domain([xDomain[0] - paddingX, xDomain[1] + paddingX])
             .range([chartHeight, 0]);
 
-        const xAxis = d3.axisBottom(xScale);
-        const zAxis = d3.axisLeft(zScale);
+        // 軸の生成
+        const zAxis = d3.axisBottom(zScale); // 下部の軸
+        const xAxis = d3.axisLeft(xScale);   // 左側の軸
+
+        // 軸の描画
+        const gZ = svg.append("g")
+            .attr("class", "axis z-axis")
+            .attr("transform", `translate(0,${chartHeight})`)
+            .call(zAxis);
 
         const gX = svg.append("g")
             .attr("class", "axis x-axis")
-            .attr("transform", `translate(0,${chartHeight})`)
             .call(xAxis);
 
-        const gZ = svg.append("g")
-            .attr("class", "axis z-axis")
-            .call(zAxis);
-
-        svg.append("text").attr("text-anchor", "middle").attr("x", chartWidth / 2).attr("y", chartHeight + margin.bottom - 10).text("X座標").attr("class", "text-gray-700 font-medium");
-        svg.append("text").attr("text-anchor", "middle").attr("transform", "rotate(-90)").attr("y", -margin.left + 20).attr("x", -chartHeight / 2).text("Z座標").attr("class", "text-gray-700 font-medium");
+        // 軸ラベルの描画
+        svg.append("text").attr("text-anchor", "middle").attr("x", chartWidth / 2).attr("y", chartHeight + margin.bottom - 10).text("Z座標").attr("class", "text-gray-700 font-medium");
+        svg.append("text").attr("text-anchor", "middle").attr("transform", "rotate(-90)").attr("y", -margin.left + 20).attr("x", -chartHeight / 2).text("X座標").attr("class", "text-gray-700 font-medium");
 
         const colorScale = d3.scaleOrdinal(d3.schemeCategory10);
 
+        // データ点の描画（cxとcyを入れ替え）
         const dots = chartArea.selectAll("circle.dot")
             .data(data, d => d.id)
             .enter()
             .append("circle")
             .attr("class", "dot")
-            .attr("cx", d => xScale(d.x))
-            .attr("cy", d => zScale(d.z))
+            .attr("cx", d => zScale(d.z)) // 横位置はZ座標
+            .attr("cy", d => xScale(d.x)) // 縦位置はX座標
             .attr("r", 6)
             .style("fill", d => colorScale(d.name))
             .style("stroke", "white")
@@ -222,18 +240,15 @@
                   .style("opacity", isMatched ? 1 : 0.2);
             });
 
+        // ラベルのアンカーポイントを計算（xとyを入れ替え）
         const labelNodes = data.map(d => ({
             ...d,
-            x: xScale(d.x),
-            y: zScale(d.z),
-            fx: xScale(d.x),
-            fy: zScale(d.z)
+            x: zScale(d.z), // フォースシミュレーションのxは横軸（Z）
+            y: xScale(d.x), // フォースシミュレーションのyは縦軸（X）
+            fx: zScale(d.z),
+            fy: xScale(d.x)
         }));
 
-        // --- ラベルの重なり順制御 ---
-        // SVGでは後から追加した要素が前面に表示される。
-        // そのため、重要度が高い（=priorityが小さい）要素を後から描画するために、
-        // データをpriorityの降順（大きい順）にソートしてから描画する。
         const sortedLabelNodes = [...labelNodes].sort((a, b) => b.priority - a.priority);
 
         const labelLines = chartArea.selectAll("line.label-line")
@@ -265,7 +280,6 @@
                     .attr('y2', d => d.y);
             });
 
-        // --- 検索機能 ---
         const searchInput = document.getElementById('search-input');
         searchInput.addEventListener('input', () => {
             const searchTerm = searchInput.value.trim().toLowerCase();
@@ -281,11 +295,11 @@
                 .style('opacity', d => searchTerm === '' || d.name.toLowerCase().includes(searchTerm) ? 1 : 0.15);
         });
 
-        // --- ズーム機能 ---
         function zoomed(event) {
             chartArea.attr("transform", event.transform);
-            gX.call(xAxis.scale(event.transform.rescaleX(xScale)));
-            gZ.call(zAxis.scale(event.transform.rescaleY(zScale)));
+            // ズーム時も正しい軸を再描画
+            gZ.call(zAxis.scale(event.transform.rescaleX(zScale)));
+            gX.call(xAxis.scale(event.transform.rescaleY(xScale)));
         }
     </script>
 </body>
