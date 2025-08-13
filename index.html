@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>S12 エンチャント本の場所</title>
+    <!-- D3.jsライブラリを読み込み -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <!-- スタイリングのためのTailwind CSSを読み込み -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 日本語表示に適したフォントを読み込み -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        /* カスタムスタイル */
+        body {
+            font-family: 'Noto Sans JP', 'Inter', sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        /* 軸のスタイル */
+        .axis path,
+        .axis line {
+            fill: none;
+            stroke: #9ca3af; /* gray-400 */
+            shape-rendering: crispEdges;
+        }
+        .axis text {
+            fill: #4b5563; /* gray-600 */
+            font-size: 12px;
+        }
+        /* データ点のスタイル */
+        .dot {
+            transition: r 0.3s ease, opacity 0.3s ease;
+            cursor: pointer;
+        }
+        /* ラベルのスタイル */
+        .dot-label {
+            font-size: 11px;
+            fill: #1f2937; /* gray-800 */
+            pointer-events: none;
+            text-shadow: 0 1px 0 #fff, 1px 0 #fff, 0 -1px 0 #fff, -1px 0 0 #fff;
+            transition: opacity 0.3s ease;
+        }
+        /* ラベルと点を結ぶ線のスタイル */
+        .label-line {
+            stroke: #6b7280; /* gray-500 */
+            stroke-width: 1px;
+            stroke-dasharray: 2,2;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+        /* ツールチップのスタイル */
+        .tooltip {
+            position: absolute;
+            text-align: center;
+            padding: 8px;
+            font: 12px sans-serif;
+            background: rgba(17, 24, 39, 0.85); /* gray-900 with opacity */
+            color: white;
+            border: 0px;
+            border-radius: 8px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+            backdrop-filter: blur(4px);
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 p-4 sm:p-6 md:p-8">
+
+    <div class="max-w-7xl mx-auto bg-white rounded-xl shadow-lg p-6 sm:p-8">
+        <h1 class="text-2xl font-bold mb-2 text-gray-900">エンチャント本場所可視化</h1>
+        <p class="text-gray-600 mb-4">検索やズームも可能です。</p>
+
+        <!-- 検索ボックス -->
+        <div class="mb-6">
+            <label for="search-input" class="block text-sm font-medium text-gray-700 mb-1">効果名で検索:</label>
+            <input type="text" id="search-input" class="w-full sm:w-1/2 md:w-1/3 p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500" placeholder="例: ダメージ">
+        </div>
+
+        <!-- グラフを描画するコンテナ -->
+        <div id="chart-container" class="w-full h-[600px] border border-gray-200 rounded-lg overflow-hidden relative"></div>
+
+        <!-- マウスオーバー時に表示するツールチップ -->
+        <div id="tooltip" class="tooltip"></div>
+    </div>
+
+    <script>
+        // ユーザーから提供されたデータ
+        const rawData = `修繕（12: 242/629）
+修繕（16: 199/641）
+耐久力III（25: 241/609）
+効率強化V（53: 141/638）
+ダメージ軽減IV（36: 173/646）
+シルクタッチ（16: 172/633）
+幸運III（17: 242/610）
+ダメージ増加V（32: 183/663）
+ダメージ増加IV（21: 191/631）
+ドロップ増加III（37: 172/637）
+入れ食い（19: 178/671）
+宝釣り（42: 145/638）
+アンデット特攻V（35: 185/659）
+無限（13: 185/661）
+無限（17: 179/647）
+射撃ダメージ増加V（48: 179/642）
+氷渡りII（20: 174/618）
+水中呼吸（11: 178/667）
+水中採掘（11: 220/630）
+飛び道具耐性IV（52: 183/659）
+爆発耐性IV（26: 149/638）
+パンチII（13: 190/640）
+落下耐性IV（15: 183/655）
+忠誠III（41: 180/667）`;
+
+        function parseData(text) {
+            const lines = text.trim().split('\n');
+            const regex = /(.+?)（(\d+):\s*(\d+)\/(\d+)\）/;
+            const data = [];
+            let index = 0;
+            for (const line of lines) {
+                const match = line.match(regex);
+                if (match) {
+                    data.push({
+                        id: `id-${match[3]}-${match[4]}-${index}`, // ユニークIDを生成
+                        name: match[1].trim(),
+                        amount: +match[2],
+                        x: +match[3],
+                        z: +match[4],
+                        label: `${match[1].trim()}（${match[2]}）`,
+                        priority: index++ // 重要度（元データの順番）を保持
+                    });
+                }
+            }
+            return data;
+        }
+
+        const data = parseData(rawData);
+
+        // --- D3.jsによるグラフ描画 ---
+
+        const container = document.getElementById('chart-container');
+        const margin = { top: 40, right: 20, bottom: 50, left: 60 };
+
+        let width = container.clientWidth;
+        let height = container.clientHeight;
+        let chartWidth = width - margin.left - margin.right;
+        let chartHeight = height - margin.top - margin.bottom;
+
+        const svgRoot = d3.select("#chart-container")
+            .append("svg")
+            .attr("width", '100%')
+            .attr("height", '100%')
+            .attr('viewBox', `0 0 ${width} ${height}`);
+
+        const zoom = d3.zoom()
+            .extent([[0, 0], [width, height]])
+            .scaleExtent([0.5, 20])
+            .on("zoom", zoomed);
+
+        svgRoot.call(zoom);
+
+        const svg = svgRoot.append("g")
+            .attr("transform", `translate(${margin.left},${margin.top})`);
+
+        const chartArea = svg.append("g");
+
+        const tooltip = d3.select("#tooltip");
+
+        const xDomain = d3.extent(data, d => d.x);
+        const zDomain = d3.extent(data, d => d.z);
+        const padding = (xDomain[1] - xDomain[0]) * 0.1;
+
+        const xScale = d3.scaleLinear()
+            .domain([xDomain[0] - padding, xDomain[1] + padding])
+            .range([0, chartWidth]);
+
+        const zScale = d3.scaleLinear()
+            .domain([zDomain[0] - padding, zDomain[1] + padding])
+            .range([chartHeight, 0]);
+
+        const xAxis = d3.axisBottom(xScale);
+        const zAxis = d3.axisLeft(zScale);
+
+        const gX = svg.append("g")
+            .attr("class", "axis x-axis")
+            .attr("transform", `translate(0,${chartHeight})`)
+            .call(xAxis);
+
+        const gZ = svg.append("g")
+            .attr("class", "axis z-axis")
+            .call(zAxis);
+
+        svg.append("text").attr("text-anchor", "middle").attr("x", chartWidth / 2).attr("y", chartHeight + margin.bottom - 10).text("X座標").attr("class", "text-gray-700 font-medium");
+        svg.append("text").attr("text-anchor", "middle").attr("transform", "rotate(-90)").attr("y", -margin.left + 20).attr("x", -chartHeight / 2).text("Z座標").attr("class", "text-gray-700 font-medium");
+
+        const colorScale = d3.scaleOrdinal(d3.schemeCategory10);
+
+        const dots = chartArea.selectAll("circle.dot")
+            .data(data, d => d.id)
+            .enter()
+            .append("circle")
+            .attr("class", "dot")
+            .attr("cx", d => xScale(d.x))
+            .attr("cy", d => zScale(d.z))
+            .attr("r", 6)
+            .style("fill", d => colorScale(d.name))
+            .style("stroke", "white")
+            .style("stroke-width", 1.5)
+            .style("opacity", 0.9)
+            .on("mouseover", function(event, d) {
+                d3.select(this).transition().duration(100).attr("r", 9).style("opacity", 1);
+                tooltip.transition().duration(200).style("opacity", 1);
+                tooltip.html(`<strong>${d.label}</strong><br/>座標: (${d.x}, ${d.z})`)
+                    .style("left", (event.pageX + 15) + "px")
+                    .style("top", (event.pageY - 15) + "px");
+            })
+            .on("mouseout", function(d) {
+                const searchInput = document.getElementById('search-input').value.trim();
+                const isMatched = searchInput === '' || d.name.toLowerCase().includes(searchInput.toLowerCase());
+                d3.select(this).transition().duration(100)
+                  .attr("r", isMatched ? 8 : 6)
+                  .style("opacity", isMatched ? 1 : 0.2);
+            });
+
+        const labelNodes = data.map(d => ({
+            ...d,
+            x: xScale(d.x),
+            y: zScale(d.z),
+            fx: xScale(d.x),
+            fy: zScale(d.z)
+        }));
+
+        // --- ラベルの重なり順制御 ---
+        // SVGでは後から追加した要素が前面に表示される。
+        // そのため、重要度が高い（=priorityが小さい）要素を後から描画するために、
+        // データをpriorityの降順（大きい順）にソートしてから描画する。
+        const sortedLabelNodes = [...labelNodes].sort((a, b) => b.priority - a.priority);
+
+        const labelLines = chartArea.selectAll("line.label-line")
+            .data(sortedLabelNodes, d => d.id)
+            .enter()
+            .insert("line", "text.dot-label")
+            .attr("class", "label-line");
+
+        const labels = chartArea.selectAll("text.dot-label")
+            .data(sortedLabelNodes, d => d.id)
+            .enter()
+            .append("text")
+            .attr("class", "dot-label")
+            .text(d => d.label);
+
+        const simulation = d3.forceSimulation(labelNodes)
+            .force("x", d3.forceX(d => d.fx).strength(0.1))
+            .force("y", d3.forceY(d => d.fy).strength(0.1))
+            .force("collide", d3.forceCollide().radius(d => d.label.length * 3.5 + 5).strength(1))
+            .on("tick", () => {
+                labels
+                    .attr('x', d => d.x + 10)
+                    .attr('y', d => d.y + 4);
+
+                labelLines
+                    .attr('x1', d => d.fx)
+                    .attr('y1', d => d.fy)
+                    .attr('x2', d => d.x + 5)
+                    .attr('y2', d => d.y);
+            });
+
+        // --- 検索機能 ---
+        const searchInput = document.getElementById('search-input');
+        searchInput.addEventListener('input', () => {
+            const searchTerm = searchInput.value.trim().toLowerCase();
+
+            dots.transition().duration(300)
+                .style('opacity', d => searchTerm === '' || d.name.toLowerCase().includes(searchTerm) ? 1 : 0.2)
+                .attr('r', d => searchTerm === '' || d.name.toLowerCase().includes(searchTerm) ? 8 : 6);
+
+            labels.transition().duration(300)
+                .style('opacity', d => searchTerm === '' || d.name.toLowerCase().includes(searchTerm) ? 1 : 0.15);
+
+            labelLines.transition().duration(300)
+                .style('opacity', d => searchTerm === '' || d.name.toLowerCase().includes(searchTerm) ? 1 : 0.15);
+        });
+
+        // --- ズーム機能 ---
+        function zoomed(event) {
+            chartArea.attr("transform", event.transform);
+            gX.call(xAxis.scale(event.transform.rescaleX(xScale)));
+            gZ.call(zAxis.scale(event.transform.rescaleY(zScale)));
+        }
+    </script>
+</body>
+</html>
